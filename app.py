@@ -50,9 +50,9 @@ class PrepItem(BaseModel):
     category: str = Field(description="Tubulars, BHA/Milling/Fishing Tools, Crossovers & Handling Gear, Wellhead/BOP, Completion/Artificial Lift, Fluids/Chemicals, or 3rd-Party Services")
     item_description: str = Field(description="Exact tool, equipment, or fluid name and functional purpose")
     technical_specs_od_id_conn: str = Field(description="Exact Max OD, Min ID, Drift ID, Weight/Grade, Length, Fishneck OD, and Top/Bottom Connections")
-    quantity_and_backup: str = Field(description="Exact primary quantity required + mandatory backup/spare units on location (e.g., 1 Primary + 1 Backup Mill, 100 bbls Hi-Vis Pill)")
-    required_timing: str = Field(description="Exact mobilization lead time (e.g., 72 hrs prior to Spud, 48 hrs before Phase 2, Strapped on Catwalk prior to RIH)")
-    verification_and_qaqc: str = Field(description="Rig-site supervisor QA/QC check: Drift with exact drift mandrel size, rabbiting, full tally, thread gauge,魚fishneck measurement, pressure test psi")
+    quantity_and_backup: str = Field(description="Exact primary quantity required + mandatory backup/spare units on location")
+    required_timing: str = Field(description="Exact mobilization lead time (e.g., 72 hrs prior to Spud, 48 hrs before Phase 2)")
+    verification_and_qaqc: str = Field(description="Rig-site supervisor QA/QC check: Drift with exact drift mandrel size, rabbiting, full tally, thread gauge, fishneck measurement, pressure test psi")
     responsible_party: str = Field(description="e.g., Day/Night Drilling Supervisor, Toolpusher, Mud Engineer, 3rd-Party Service Hand, Logistics")
 
 class TimeEstimateRow(BaseModel):
@@ -180,4 +180,122 @@ def build_historical_word(plan: MasterDrillingPlan, corp_template=None) -> Bytes
     for check in plan.clearance_and_dls_audit:
         row = c_table.add_row().cells
         row[0].text = check.depth_interval
-        row[1].text = check.wellbore_restriction_or_
+        row[1].text = check.wellbore_restriction_or_dls
+        row[2].text = check.planned_tool_or_bha_od
+        row[3].text = check.risk_level
+        row[4].text = check.supervisor_action
+    
+    doc.add_heading("4. Filtered Downhole Historical Events (Surface & Weather Excluded)", level=1)
+    table = doc.add_table(rows=1, cols=5)
+    table.style = 'Table Grid'
+    headers = ["Date/Year", "Depth (MD/TVD)", "Zone/Section", "Downhole Issue", "Mitigation / Action"]
+    for i, h in enumerate(headers):
+        cell = table.rows[0].cells[i]
+        cell.text = h
+        for run in cell.paragraphs[0].runs:
+            run.bold = True
+            
+    for event in plan.historical_downhole_data:
+        row = table.add_row().cells
+        row[0].text = event.date_or_year
+        row[1].text = event.depth_md_tvd
+        row[2].text = event.formation_or_zone
+        row[3].text = event.downhole_issue
+        row[4].text = event.lesson_learned_mitigation
+        
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+def build_game_plan_word(plan: MasterDrillingPlan, corp_template=None) -> BytesIO:
+    if corp_template:
+        corp_template.seek(0)
+        doc = DocxTemplate(corp_template)
+        doc.render({
+            "well_name": plan.well_name,
+            "wellbore_summary": plan.wellbore_summary_from_sketches,
+            "survey_summary": plan.survey_critical_points,
+            "game_plan_phases": [p.model_dump() for p in plan.game_plan_phases],
+        })
+        buf = BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+        return buf
+
+    doc = docx.Document()
+    doc.add_heading(f"Detailed Field Execution Game Plan: {plan.well_name}", 0)
+    doc.add_paragraph(f"Operation Scope: {plan.operation_type}")
+    doc.add_paragraph(f"Wellbore Mechanical Summary: {plan.wellbore_summary_from_sketches}")
+    doc.add_paragraph(f"Directional Survey & Tortuosity: {plan.survey_critical_points}")
+    
+    for idx, phase in enumerate(plan.game_plan_phases, 1):
+        doc.add_heading(f"Phase {idx}: {phase.phase_name}", level=1)
+        
+        p_meta = doc.add_paragraph()
+        p_meta.add_run(f"Objective: {phase.objective}\n").bold = True
+        p_meta.add_run(f"Interval & BHA Specs: {phase.depth_interval_and_bha}")
+        
+        doc.add_heading("A. Pre-Job Safety, Line-Up & Barrier Checks:", level=2)
+        for check in phase.pre_job_and_safety_brief:
+            doc.add_paragraph(check, style='List Bullet')
+
+        doc.add_heading("B. Detailed Step-by-Step Rig Floor Execution:", level=2)
+        for step in phase.step_by_step_execution:
+            doc.add_paragraph(step, style='List Number')
+            
+        doc.add_heading("C. Drilling / Milling / Workover Parameters & Hydraulics:", level=2)
+        doc.add_paragraph(phase.hydraulics_and_parameters)
+
+        doc.add_heading("D. Downhole Hazards (Sketch & Survey Cross-Check):", level=2)
+        for hazard in phase.wellbore_and_survey_hazards:
+            p_haz = doc.add_paragraph(style='List Bullet')
+            run_haz = p_haz.add_run(hazard)
+            if any(k in hazard.lower() for k in ["stuck", "gas lock", "loss", "dls", "fish", "tight"]):
+                run_haz.font.color.rgb = RGBColor(192, 0, 0)
+                run_haz.bold = True
+
+        doc.add_heading("E. Rig-Floor 'IF / THEN' Contingency Plan:", level=2)
+        for cont in phase.if_then_contingencies:
+            doc.add_paragraph(cont, style='List Bullet')
+        
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+def build_prep_plan_word(plan: MasterDrillingPlan) -> BytesIO:
+    doc = docx.Document()
+    doc.add_heading(f"Detailed Operational Preparation & Readiness Plan: {plan.well_name}", 0)
+    table = doc.add_table(rows=1, cols=8)
+    table.style = 'Table Grid'
+    headers = [
+        "Phase", "Category", "Item / Equipment", "Technical Specs (OD/ID/Conn)",
+        "Qty & Backup", "Required Timing", "Rig-Site QA/QC Verification", "Owner"
+    ]
+    for i, h in enumerate(headers):
+        cell = table.rows[0].cells[i]
+        cell.text = h
+        for run in cell.paragraphs[0].runs:
+            run.bold = True
+            
+    for item in plan.preparation_checklist:
+        row = table.add_row().cells
+        row[0].text = item.phase
+        row[1].text = item.category
+        row[2].text = item.item_description
+        row[3].text = item.technical_specs_od_id_conn
+        row[4].text = item.quantity_and_backup
+        row[5].text = item.required_timing
+        row[6].text = item.verification_and_qaqc
+        row[7].text = item.responsible_party
+        
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+def build_prep_excel(plan: MasterDrillingPlan, corp_template=None, start_row: int = 7) -> BytesIO:
+    if corp_template:
+        corp_template.seek(0)
+        
