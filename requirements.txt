@@ -1,0 +1,8 @@
+streamlit
+google-genai
+python-docx
+docxtpl
+pandas
+openpyxl
+xlsxwriter
+pydantic
