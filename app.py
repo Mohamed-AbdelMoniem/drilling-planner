@@ -399,7 +399,25 @@ with st.sidebar:
         pass
         
     api_key = st.text_input("Gemini API Key", value=saved_key, type="password", help="Enter your Google AI Studio Gemini API Key")
-    model_choice = st.selectbox("Select Gemini Model", ["gemini-2.5-pro", "gemini-2.5-flash"], index=0)
+    
+    # Updated with active Gemini 3.x & 4 Argon models + automatic fallback list
+    selected_model = st.selectbox(
+        "Select Gemini Model", 
+        [
+            "gemini-3.8-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-4-argon",
+            "Custom Model ID..."
+        ], 
+        index=0
+    )
+    if selected_model == "Custom Model ID...":
+        model_choice = st.text_input("Enter Custom Gemini Model ID", value="gemini-3.1-pro-preview")
+    else:
+        model_choice = selected_model
     
     st.divider()
     st.header("2. Optional Corporate Branding")
@@ -409,7 +427,6 @@ with st.sidebar:
     corp_prep_tpl = st.file_uploader("Corporate Prep Plan Excel Template (.xlsx)", type=["xlsx"])
     corp_time_tpl = st.file_uploader("Corporate Time Frame Excel Template (.xlsx)", type=["xlsx"])
 
-# Quick Demo Mode Banner for Evaluators & Mobile Testing
 demo_col1, demo_col2 = st.columns([3, 1])
 with demo_col1:
     st.info("💡 **Evaluating or testing on mobile?** Upload your well package below, or toggle **Demo Mode** to test the Multi-Agent system immediately with a pre-loaded workover & milling well package.")
@@ -439,7 +456,7 @@ if st.button("🚀 Run Multi-Agent Strategic Planner & Generate All 4 Deliverabl
     elif not use_demo_mode and not eng_prog:
         st.error("Please upload the Engineering Program (.docx) or enable Demo Mode to proceed.")
     else:
-        with st.spinner("Executing Multi-Agent Pipeline (Filtering Downhole History, Auditing BHA Clearances, Building Game Plan & Time Schedule)..."):
+        with st.spinner(f"Executing Multi-Agent Pipeline using {model_choice}..."):
             try:
                 client = genai.Client(api_key=api_key)
                 contents = []
@@ -487,19 +504,40 @@ if st.button("🚀 Run Multi-Agent Strategic Planner & Generate All 4 Deliverabl
                                     contents.append(f"=== {group_title} PDF ({f.name}) ===")
                                     contents.append(types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"))
 
-                response = client.models.generate_content(
-                    model=model_choice,
-                    contents=contents,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        response_mime_type="application/json",
-                        response_schema=MasterDrillingPlan,
-                        temperature=0.1,
-                    ),
-                )
+                # Automatic fallback loop across active Gemini 3.x / 4 models if one is unavailable on the user's tier
+                fallback_models = [model_choice, "gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.5-flash"]
+                seen = set()
+                ordered_models = [m for m in fallback_models if not (m in seen or seen.add(m))]
+                
+                last_err = None
+                response = None
+                used_model = model_choice
+                for m_name in ordered_models:
+                    try:
+                        response = client.models.generate_content(
+                            model=m_name,
+                            contents=contents,
+                            config=types.GenerateContentConfig(
+                                system_instruction=system_prompt,
+                                response_mime_type="application/json",
+                                response_schema=MasterDrillingPlan,
+                                temperature=0.1,
+                            ),
+                        )
+                        used_model = m_name
+                        break
+                    except Exception as loop_err:
+                        last_err = loop_err
+                        if "404" in str(loop_err) or "NOT_FOUND" in str(loop_err):
+                            continue
+                        else:
+                            raise loop_err
+
+                if response is None:
+                    raise last_err
 
                 st.session_state["plan_result"] = MasterDrillingPlan.model_validate_json(response.text)
-                st.success(f"Successfully generated all 4 deliverables for Well: {st.session_state['plan_result'].well_name}")
+                st.success(f"Successfully generated all 4 deliverables for Well: {st.session_state['plan_result'].well_name} (Model: {used_model})")
 
             except Exception as e:
                 st.error(f"Error during processing: {e}")
@@ -514,7 +552,6 @@ if "plan_result" in st.session_state:
     
     st.divider()
     
-    # Executive KPI Metrics Row
     total_hours = sum(step.estimated_hours for step in plan.time_frame_schedule)
     total_days = round(total_hours / 24.0, 1)
     high_risk_count = sum(1 for c in plan.clearance_and_dls_audit if "HIGH" in c.risk_level.upper())
