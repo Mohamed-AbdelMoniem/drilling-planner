@@ -21,9 +21,7 @@ class DownholeEvent(BaseModel):
     date_or_year: str = Field(description="Date or year of the historical operation")
     depth_md_tvd: str = Field(description="Depth (MD/TVD) and hole/casing size")
     formation_or_zone: str = Field(description="Formation name or wellbore section")
-    downhole_issue: str = Field(
-        description="Strictly downhole wellbore issues (stuck, gas lock, losses, tight hole, fish, packer/plug issues, well control, casing damage). NO surface equipment or weather issues."
-    )
+    downhole_issue: str = Field(description="Strictly downhole wellbore issues (stuck, gas lock, losses, tight hole, fish, packer/plug issues, well control, casing damage). NO surface equipment or weather issues.")
     lesson_learned_mitigation: str = Field(description="Actionable technical mitigation for the upcoming operation")
 
 class ClearanceAndSurveyCheck(BaseModel):
@@ -38,9 +36,7 @@ class PhaseGamePlan(BaseModel):
     depth_interval_and_bha: str = Field(description="Exact MD/TVD interval, BHA components with ODs/IDs/connections, and pipe tally notes")
     objective: str
     pre_job_and_safety_brief: List[str] = Field(description="PJSM topics, valve/manifold line-up checks, surface pressure test values, and barrier verification")
-    step_by_step_execution: List[str] = Field(
-        description="MINIMUM 8 to 15 ultra-detailed sequential rig-floor steps per phase. Include exact depths, tripping speeds, circulation rates, space-out, and tag procedures."
-    )
+    step_by_step_execution: List[str] = Field(description="MINIMUM 8 to 15 ultra-detailed sequential rig-floor steps per phase. Include exact depths, tripping speeds, circulation rates, space-out, and tag procedures.")
     hydraulics_and_parameters: str = Field(description="Exact WOB, RPM, Torque limits, Pump Rate (BPM/GPM), Standpipe Pressure, Fluid weight/viscosity, and Max Overpull/Slack-off limits")
     wellbore_and_survey_hazards: List[str] = Field(description="Exact depths of high DLS, tight spots, liner tops, perforations, gas lock risks, or stuck pipe zones")
     if_then_contingencies: List[str] = Field(description="Concrete IF/THEN contingency actions for the rig supervisor if stuck, losses, high torque, or gas lock occurs")
@@ -298,4 +294,391 @@ def build_prep_plan_word(plan: MasterDrillingPlan) -> BytesIO:
 def build_prep_excel(plan: MasterDrillingPlan, corp_template=None, start_row: int = 7) -> BytesIO:
     if corp_template:
         corp_template.seek(0)
+        wb = openpyxl.load_workbook(corp_template)
+        ws = wb.active
+        ws["C3"] = plan.well_name
+    else:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Detailed_Prep_Plan"
+        start_row = 4
+        ws["A1"] = f"DETAILED OPERATIONAL PREPARATION & READINESS PLAN - {plan.well_name}"
+        ws["A1"].font = Font(size=14, bold=True, color="1F4E78")
+        headers = [
+            "Item #", "Phase", "Category", "Equipment / Material Description",
+            "Technical Specs (OD / ID / Drift / Conn)", "Qty + Backup Required",
+            "Required Lead Time", "Rig-Site QA/QC & Verification Check",
+            "Responsible Party", "Readiness Status"
+        ]
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        for col_idx, text in enumerate(headers, 1):
+            c = ws.cell(row=3, column=col_idx, value=text)
+            c.fill = header_fill
+            c.font = header_font
+
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+
+    for idx, item in enumerate(plan.preparation_checklist):
+        r = start_row + idx
+        if corp_template and idx > 0:
+            copy_row_formatting(ws, source_row=start_row, target_row=r, max_col=10)
+            
+        vals = [
+            idx + 1,
+            item.phase,
+            item.category,
+            item.item_description,
+            item.technical_specs_od_id_conn,
+            item.quantity_and_backup,
+            item.required_timing,
+            item.verification_and_qaqc,
+            item.responsible_party,
+            "Pending"
+        ]
+        for c_idx, val in enumerate(vals, 1):
+            cell = ws.cell(row=r, column=c_idx, value=val)
+            if not corp_template:
+                cell.border = thin_border
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    if not corp_template:
+        widths = [8, 20, 20, 32, 35, 22, 22, 38, 20, 15]
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+def build_time_frame_excel(plan: MasterDrillingPlan, corp_template=None, start_row: int = 7) -> BytesIO:
+    if corp_template:
+        corp_template.seek(0)
+        wb = openpyxl.load_workbook(corp_template)
+        ws = wb.active
+        ws["C3"] = plan.well_name
+    else:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Time_Frame_Schedule"
+        start_row = 4
+        ws["A1"] = f"EXPECTED OPERATIONAL TIME FRAME - {plan.well_name}"
+        ws["A1"].font = Font(size=14, bold=True, color="1F4E78")
+        headers = ["Step #", "Phase", "Operation Description", "Depth Interval", "Est. Hours", "Est. Days", "Cum. Hours", "Cum. Days", "Operational Remarks"]
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        for col_idx, text in enumerate(headers, 1):
+            c = ws.cell(row=3, column=col_idx, value=text)
+            c.fill = header_fill
+            c.font = header_font
+
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+    risk_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+
+    for idx, step in enumerate(plan.time_frame_schedule):
+        r = start_row + idx
+        if corp_template and idx > 0:
+            copy_row_formatting(ws, source_row=start_row, target_row=r, max_col=9)
+
+        ws.cell(row=r, column=1, value=idx + 1)
+        ws.cell(row=r, column=2, value=step.phase)
+        ws.cell(row=r, column=3, value=step.operation_step)
+        ws.cell(row=r, column=4, value=step.depth_interval)
+        ws.cell(row=r, column=5, value=step.estimated_hours)
+        ws.cell(row=r, column=6, value=f"=ROUND(E{r}/24, 2)")
+        ws.cell(row=r, column=7, value=f"=E{r}" if idx == 0 else f"=G{r-1}+E{r}")
+        ws.cell(row=r, column=8, value=f"=ROUND(G{r}/24, 2)")
+        ws.cell(row=r, column=9, value=step.operational_remarks)
+
+        is_risk = any(k in (step.operation_step + " " + step.operational_remarks).lower() for k in ["stuck", "gas lock", "milling", "fishing", "loss", "dls"])
+        for c_idx in range(1, 10):
+            cell = ws.cell(row=r, column=c_idx)
+            if not corp_template:
+                cell.border = thin_border
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+                if is_risk:
+                    cell.fill = risk_fill
+
+    if not corp_template:
+        widths = [8, 20, 42, 16, 12, 12, 14, 14, 38]
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+# ==========================================
+# 5. STREAMLIT MULTI-AGENT DASHBOARD UI
+# ==========================================
+
+st.set_page_config(page_title="RigOps AI — Drilling & Workover Strategic Planner", layout="wide")
+st.title("🛢️ RigOps AI: Automated Drilling & Workover Strategic Planner")
+st.caption("Consultant-Grade Multi-Agent System — Produces Detailed Downhole History, Rig Execution Game Plans, Granular Prep Checklists, and Time Schedules.")
+
+with st.sidebar:
+    st.header("1. AI Engine Configuration")
+    saved_key = ""
+    try:
+        saved_key = st.secrets.get("GEMINI_API_KEY", "")
+    except Exception:
+        pass
         
+    api_key = st.text_input("Gemini API Key", value=saved_key, type="password", help="Enter your Google AI Studio Gemini API Key")
+    
+    selected_model = st.selectbox(
+        "Select Gemini Model", 
+        [
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-3.8-flash",
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-4-argon",
+            "Custom Model ID..."
+        ], 
+        index=0
+    )
+    if selected_model == "Custom Model ID...":
+        model_choice = st.text_input("Enter Custom Gemini Model ID", value="gemini-3.1-pro-preview")
+    else:
+        model_choice = selected_model
+    
+    st.divider()
+    st.header("2. Optional Corporate Branding")
+    st.caption("Leave empty to auto-generate formatted files, or upload your company templates.")
+    corp_hist_tpl = st.file_uploader("Corporate History Word Template (.docx)", type=["docx"])
+    corp_gp_tpl = st.file_uploader("Corporate Game Plan Word Template (.docx)", type=["docx"])
+    corp_prep_tpl = st.file_uploader("Corporate Prep Plan Excel Template (.xlsx)", type=["xlsx"])
+    corp_time_tpl = st.file_uploader("Corporate Time Frame Excel Template (.xlsx)", type=["xlsx"])
+
+demo_col1, demo_col2 = st.columns([3, 1])
+with demo_col1:
+    st.info("💡 **Evaluating or testing on mobile?** Upload your well package below, or toggle **Demo Mode** to test the Multi-Agent system immediately with a pre-loaded workover & milling well package.")
+with demo_col2:
+    use_demo_mode = st.toggle("⚡ Enable Demo Well Package", value=False)
+
+if not use_demo_mode:
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Primary Well Inputs")
+        eng_prog = st.file_uploader("1. Engineering Program (.docx) [Required]", type=["docx"])
+        hist_files = st.file_uploader("2. Historical Well Files (.xlsx, .pdf)", type=["xlsx", "pdf"], accept_multiple_files=True)
+        survey_file = st.file_uploader("3. Directional Survey (.xlsx, .pdf)", type=["xlsx", "pdf"])
+
+    with col2:
+        st.subheader("Sketches & Reference Plans")
+        sketch_files = st.file_uploader("4. Drilling & Last Workover Sketches (.xlsx, .pdf)", type=["xlsx", "pdf"], accept_multiple_files=True)
+        ref_files = st.file_uploader("5. Similar Game Plan & Prep Plan (.xlsx)", type=["xlsx"], accept_multiple_files=True)
+else:
+    st.success("✅ **Demo Well Package Loaded (Well PHIOPS-12):** Workover ESP pull, stuck packer milling at 8,420 ft, directional survey with 6.8°/100ft DLS, and historical reports containing surface noise + downhole losses/gas lock.")
+    with st.expander("Preview Loaded Demo Well Package Data"):
+        st.code(DEMO_ENGINEERING_PROGRAM)
+
+if st.button("🚀 Run Multi-Agent Strategic Planner & Generate All 4 Deliverables", type="primary", use_container_width=True):
+    if not api_key:
+        st.error("Please enter your Gemini API Key in the left sidebar.")
+    elif not use_demo_mode and not eng_prog:
+        st.error("Please upload the Engineering Program (.docx) or enable Demo Mode to proceed.")
+    else:
+        with st.spinner(f"Executing Consultant-Grade Multi-Agent Pipeline using {model_choice}..."):
+            try:
+                client = genai.Client(api_key=api_key)
+                contents = []
+
+                system_prompt = """
+                You are an elite Consultant Drilling & Workover Supervisor System consisting of 4 specialized agents:
+                
+                - AGENT 1 (DOWNHOLE HISTORICAL FILTER):
+                  Extract ONLY wellbore/downhole events tied to depths and formations (stuck pipe/tools, tight spots, mud losses, kicks, gas lock, fishing, milling, packer/plug issues, casing damage).
+                  STRICTLY EXCLUDE surface equipment issues (mud pumps, top drive, generators, rig mechanic downtime) and weather delays.
+                  Always use exact English industry terminology ("stuck", "gas lock", "tight hole", "lost circulation") and omit financial/cost figures.
+                
+                - AGENT 2 (WELLBORE GEOMETRY & SURVEY AUDITOR):
+                  Cross-check planned BHA, milling tools, and completion ODs against casing/liner drift IDs and restrictions from the sketches.
+                  Identify high Dogleg Severity (DLS) intervals from the Directional Survey and prescribe reaming/tripping precautions.
+                
+                - AGENT 3 (HYPER-DETAILED GAME PLAN & PREPARATION PLANNER):
+                  1. GAME PLAN: Do NOT summarize. For EVERY phase, generate 8 to 15 granular, step-by-step rig-floor instructions (including exact depths, space-out, tripping speeds, circulation rates, WOB/RPM/Torque parameters, PJSM/barrier checks, and concrete IF/THEN contingency trees for stuck pipe, gas lock, or losses).
+                  2. PREPARATION PLAN: Generate a comprehensive, granular checklist of 20 to 35+ line items covering every phase. Include Tubulars, BHA/Milling/Fishing tools, Crossovers, Handling Gear (slips, elevators, safety clamps, drift mandrels), Wellhead/BOP elastomers, Kill/Completion Fluids & Pills (volumes & weights), and 3rd-Party Services. Specify exact ODs, IDs, connections, primary + backup quantities, lead times, and rig-site QA/QC verification checks.
+                
+                - AGENT 4 (OPERATIONAL TIME ESTIMATOR):
+                  Break down the entire operation into sequential steps with realistic hour estimates based on tripping speeds, circulation, milling/drilling rates, and rig-up/rig-down times.
+                """
+
+                if use_demo_mode:
+                    contents.append(DEMO_ENGINEERING_PROGRAM)
+                else:
+                    contents.append(f"=== 1. ENGINEERING PROGRAM ===\n{extract_docx_text(eng_prog)}")
+
+                    file_groups = [
+                        ("2. HISTORICAL WELL FILE", hist_files),
+                        ("3. DIRECTIONAL SURVEY", [survey_file] if survey_file else []),
+                        ("4. WELLBORE & WORKOVER SKETCH", sketch_files),
+                        ("5. REFERENCE GAME PLAN & PREP PLAN", ref_files),
+                    ]
+
+                    for group_title, flist in file_groups:
+                        for f in flist:
+                            if f is not None:
+                                if f.name.lower().endswith(".xlsx"):
+                                    contents.append(f"=== {group_title} ({f.name}) ===\n{extract_excel_text(f)}")
+                                elif f.name.lower().endswith(".pdf"):
+                                    f.seek(0)
+                                    pdf_bytes = f.read()
+                                    contents.append(f"=== {group_title} PDF ({f.name}) ===")
+                                    contents.append(types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"))
+
+                fallback_models = [model_choice, "gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.8-flash", "gemini-3.5-flash"]
+                seen = set()
+                ordered_models = [m for m in fallback_models if not (m in seen or seen.add(m))]
+                
+                last_err = None
+                response = None
+                used_model = model_choice
+                for m_name in ordered_models:
+                    try:
+                        response = client.models.generate_content(
+                            model=m_name,
+                            contents=contents,
+                            config=types.GenerateContentConfig(
+                                system_instruction=system_prompt,
+                                response_mime_type="application/json",
+                                response_schema=MasterDrillingPlan,
+                                temperature=0.1,
+                            ),
+                        )
+                        used_model = m_name
+                        break
+                    except Exception as loop_err:
+                        last_err = loop_err
+                        if "404" in str(loop_err) or "NOT_FOUND" in str(loop_err):
+                            continue
+                        else:
+                            raise loop_err
+
+                if response is None:
+                    raise last_err
+
+                st.session_state["plan_result"] = MasterDrillingPlan.model_validate_json(response.text)
+                st.success(f"Successfully generated all 4 Consultant-Grade deliverables for Well: {st.session_state['plan_result'].well_name} (Model: {used_model})")
+
+            except Exception as e:
+                st.error(f"Error during processing: {e}")
+
+
+# ==========================================
+# 6. EXECUTIVE KPI SUMMARY & DOWNLOAD CENTER
+# ==========================================
+
+if "plan_result" in st.session_state:
+    plan: MasterDrillingPlan = st.session_state["plan_result"]
+    
+    st.divider()
+    
+    total_hours = sum(step.estimated_hours for step in plan.time_frame_schedule)
+    total_days = round(total_hours / 24.0, 1)
+    high_risk_count = sum(1 for c in plan.clearance_and_dls_audit if "HIGH" in c.risk_level.upper())
+    
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Well Name", plan.well_name)
+    k2.metric("Total Expected Time", f"{total_hours:.1f} hrs ({total_days} Days)")
+    k3.metric("Prep Checklist Items", f"{len(plan.preparation_checklist)} Verified Items")
+    k4.metric("High-Risk Clearance/DLS Alerts", f"{high_risk_count} Critical Zones")
+
+    st.subheader(f"📥 Download Generated Deliverables — {plan.well_name}")
+    
+    dl1, dl2, dl3, dl4, dl5 = st.columns(5)
+    with dl1:
+        st.download_button(
+            "📄 1. Historical Data (.docx)",
+            data=build_historical_word(plan, corp_hist_tpl),
+            file_name=f"{plan.well_name}_1_Historical_Data.docx",
+            use_container_width=True
+        )
+    with dl2:
+        st.download_button(
+            "📘 2. Detailed Game Plan (.docx)",
+            data=build_game_plan_word(plan, corp_gp_tpl),
+            file_name=f"{plan.well_name}_2_Detailed_Game_Plan.docx",
+            use_container_width=True
+        )
+    with dl3:
+        st.download_button(
+            "📊 3A. Detailed Prep Plan (.xlsx)",
+            data=build_prep_excel(plan, corp_prep_tpl),
+            file_name=f"{plan.well_name}_3_Detailed_Prep_Plan.xlsx",
+            use_container_width=True
+        )
+    with dl4:
+        st.download_button(
+            "📝 3B. Detailed Prep Plan (.docx)",
+            data=build_prep_plan_word(plan),
+            file_name=f"{plan.well_name}_3_Detailed_Prep_Plan.docx",
+            use_container_width=True
+        )
+    with dl5:
+        st.download_button(
+            "⏱️ 4. Time Frame (.xlsx)",
+            data=build_time_frame_excel(plan, corp_time_tpl),
+            file_name=f"{plan.well_name}_4_Expected_Time_Frame.xlsx",
+            use_container_width=True
+        )
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "1. Downhole History (Filtered)", 
+        "2. Detailed Game Plan", 
+        "3. Detailed Preparation Plan", 
+        "4. Expected Time Frame",
+        "5. BHA Clearance & DLS Audit"
+    ])
+    
+    with tab1:
+        st.markdown(f"**Wellbore Summary (From Sketches):** {plan.wellbore_summary_from_sketches}")
+        st.markdown(f"**Directional Survey Critical Points:** {plan.survey_critical_points}")
+        st.dataframe(pd.DataFrame([e.model_dump() for e in plan.historical_downhole_data]), use_container_width=True)
+        
+    with tab2:
+        for p in plan.game_plan_phases:
+            with st.expander(f"Phase: {p.phase_name} — {p.objective}", expanded=True):
+                st.caption(f"**Interval & BHA Specs:** {p.depth_interval_and_bha}")
+                st.markdown("**A. Pre-Job Safety, Line-Up & Barrier Verification:**")
+                for c in p.pre_job_and_safety_brief:
+                    st.markdown(f"- 🛡️ {c}")
+                st.markdown("**B. Step-by-Step Rig Floor Execution:**")
+                for idx_s, s in enumerate(p.step_by_step_execution, 1):
+                    st.markdown(f"{idx_s}. {s}")
+                st.info(f"**C. Hydraulics & Operating Parameters:** {p.hydraulics_and_parameters}")
+                st.markdown("**D. Wellbore & Survey Hazards:**")
+                for hazard in p.wellbore_and_survey_hazards:
+                    st.markdown(f"- ⚠️ **{hazard}**")
+                st.markdown("**E. Rig-Floor 'IF / THEN' Contingencies:**")
+                for cont in p.if_then_contingencies:
+                    st.markdown(f"- 🔄 {cont}")
+                
+    with tab3:
+        st.dataframe(pd.DataFrame([i.model_dump() for i in plan.preparation_checklist]), use_container_width=True)
+        
+    with tab4:
+        df_time = pd.DataFrame([t.model_dump() for t in plan.time_frame_schedule])
+        df_time["Est. Days"] = (df_time["estimated_hours"] / 24.0).round(2)
+        df_time["Cum. Hours"] = df_time["estimated_hours"].cumsum()
+        df_time["Cum. Days"] = (df_time["Cum. Hours"] / 24.0).round(2)
+        st.dataframe(df_time, use_container_width=True)
+        
+        st.markdown("#### Phase Duration Breakdown (Hours)")
+        phase_chart = df_time.groupby("phase", as_index=False)["estimated_hours"].sum()
+        st.bar_chart(phase_chart.set_index("phase"))
+
+    with tab5:
+        st.markdown("#### Automated BHA OD vs. Wellbore ID & Dogleg Severity Audit")
+        st.dataframe(pd.DataFrame([c.model_dump() for c in plan.clearance_and_dls_audit]), use_container_width=True)
